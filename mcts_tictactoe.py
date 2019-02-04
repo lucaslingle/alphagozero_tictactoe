@@ -334,7 +334,7 @@ def run_me_a_simulation(tree, sess, f_theta):
 
 
 
-def run_me_the_mtcs(tree, sess, f_theta, num_sims, t):
+def run_me_the_mcts(tree, sess, f_theta, num_sims, t):
     # t denotes the move number of the move currently being decided.
     # when computing pi_t, the alphago zero people use tau = 1.0 early in game, and use a low temperature parameter tau for the later moves in the game.
     # for now, we will stick with tau = 1.0 the whole game, but having t as an argument in this function makes this functionality easy to change, if we so wish.
@@ -401,7 +401,7 @@ def run_me_a_game(sess, f_theta, num_sims=100, debug=False):
         s_t = game.clone()
         valid_t = tree.valid_actions_mask_vec
 
-        tree, pi_t = run_me_the_mtcs(tree, sess, f_theta, num_sims=num_sims, t=t)
+        tree, pi_t = run_me_the_mcts(tree, sess, f_theta, num_sims=num_sims, t=t)
 
         Vs = tree.Vs
         Pas_vec = tree.Pas_vec
@@ -553,7 +553,7 @@ sess = tf.Session()
 sess.run(init_op)
 
 # tree = get_me_a_tree(game)
-# tree, pi_t = run_me_the_mtcs(tree, sess, f_theta, num_sims=1000)
+# tree, pi_t = run_me_the_mcts(tree, sess, f_theta, num_sims=1000)
 
 train_log_before, game_log_before, debug_log_before = run_me_a_game(sess, f_theta, num_sims=100, debug=True)
 
@@ -703,7 +703,7 @@ def play_me_a_game(sess, f_theta, num_sims=100, human_player_id=None):
 
             # in current implementation, the bot is gonna run some simulations every turn, even if it's the human's move.
             # because, why not increase our visitation counts?
-            tree, pi_t = run_me_the_mtcs(tree, sess, f_theta, num_sims=num_sims, t=t)
+            tree, pi_t = run_me_the_mcts(tree, sess, f_theta, num_sims=num_sims, t=t)
             a_t = 3 * move[0] + move[1]
             tree = set_new_root(tree, a_t)
 
@@ -712,7 +712,7 @@ def play_me_a_game(sess, f_theta, num_sims=100, human_player_id=None):
             print(game)
             print("\nit's the bot's turn. where will it go?")
 
-            tree, pi_t = run_me_the_mtcs(tree, sess, f_theta, num_sims=num_sims, t=t)
+            tree, pi_t = run_me_the_mcts(tree, sess, f_theta, num_sims=num_sims, t=t)
             a_t = choose_a_move(pi_t)
             tree = set_new_root(tree, a_t)
 

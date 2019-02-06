@@ -109,8 +109,10 @@ class TicTacToe:
         self.episode_done = False
 
     def __repr__(self):
-        if self.episode_done:
+        if self.episode_done and self.check_win():
             line1 = str(-1 * self.state.turn_parity.sign) + ' has won.'
+        elif self.episode_done:
+            line1 = "it's a tie."
         else:
             line1 = str(self.state.turn_parity) + ' to move:'
 
@@ -160,6 +162,65 @@ game.step(move=(2,0), player_id=1)
 game.step(move=(2,2), player_id=-1)
 print(game)
 
+
+def get_me_this_rotation(i):
+    if i == 0:
+        # identity
+        forward = [[0,0], [0,1], [0,2], [1,0], [1,1], [1,2], [2,0], [2,1], [2,2]]
+        backward = [[0,0], [0,1], [0,2], [1,0], [1,1], [1,2], [2,0], [2,1], [2,2]]
+    elif i == 1:
+        # rotate clockwise 90 degrees
+        forward = [[2,0], [1,0], [0,0], [2,1], [1,1], [0,1], [2,2], [1,2], [0,2]]
+        backward = [[0,2], [1,2], [2,2], [0,1], [1,1], [2,1], [0,0], [1,0], [2,0]]
+    elif i == 2:
+        # rotate clockwise 180 degrees
+        forward = [[2,2], [2,1], [2,0], [1,2], [1,1], [1,0], [0,2], [0,1], [0,0]]
+        backward = [[2,2], [2,1], [2,0], [1,2], [1,1], [1,0], [0,2], [0,1], [0,0]]
+    elif i == 3:
+        forward = [[0,2], [1,2], [2,2], [0,1], [1,1], [2,1], [0,0], [1,0], [2,0]]
+        backward = [[2,0], [1,0], [0,0], [2,1], [1,1], [0,1], [2,2], [1,2], [0,2]]
+
+    map_to_flat_idxs = lambda ij_pair: (3 * ij_pair[0] + ij_pair[1])
+
+    forward = [map_to_flat_idxs(ij_pair) for ij_pair in forward]
+    backward = [map_to_flat_idxs(ij_pair) for ij_pair in backward]
+
+    return forward, backward
+
+def get_me_this_reflection(i):
+    if i == 0:
+        # reflection around the axis 0 degrees clockwise from the vertical
+        forward = [[0,2], [0,1], [0,0], [1,2], [1,1], [1,0], [2,2], [2,1], [2,0]]
+        backward = [[0,2], [0,1], [0,0], [1,2], [1,1], [1,0], [2,2], [2,1], [2,0]]
+    elif i == 1:
+        # reflection around the axis 45 degrees clockwise from the vertical
+        forward = [[2,2], [1,2], [0,2], [2,1], [1,1], [0,1], [2,0], [1,0], [0,0]]
+        backward = [[2,2], [1,2], [0,2], [2,1], [1,1], [0,1], [2,0], [1,0], [0,0]]
+    elif i == 2:
+        # reflection around the axis 90 degrees clockwise from the vertical
+        forward = [[2,0], [2,1], [2,2], [1,0], [1,1], [1,2], [0,0], [0,1], [0,2]]
+        backward = [[2,0], [2,1], [2,2], [1,0], [1,1], [1,2], [0,0], [0,1], [0,2]]
+    elif i == 3:
+        # reflection around the axis 135 degrees clockwise from the vertical
+        forward = [[0,0], [1,0], [2,0], [0,1], [1,1], [2,1], [0,2], [1,2], [2,2]]
+        backward = [[0,0], [1,0], [2,0], [0,1], [1,1], [2,1], [0,2], [1,2], [2,2]]
+
+    map_to_flat_idxs = lambda ij_pair: (3 * ij_pair[0] + ij_pair[1])
+
+    forward = [map_to_flat_idxs(ij_pair) for ij_pair in forward]
+    backward = [map_to_flat_idxs(ij_pair) for ij_pair in backward]
+
+    return forward, backward
+
+def get_me_a_random_transformation():
+    i = np.random.randint(0,8)
+    if i in range(0,4):
+        forward, backward = get_me_this_reflection(i)
+    else:
+        i = i - 4
+        forward, backward = get_me_this_rotation(i)
+
+    return forward, backward
 
 
 class Node:
@@ -227,19 +288,29 @@ class Node:
         state = self.s.state
         state_repr = state.board * state.turn_parity.sign
 
-        state_repr_batch = np.array([state_repr])
-        valid_actions_mask_batch = np.array([self.valid_actions_mask_vec])
+        d_i, d_i_inverse = get_me_a_random_transformation()
 
-        p_vec, v = f_theta.predict(sess, state_repr_batch, valid_actions_mask_batch)
+        d_i_applied_to_state_repr = np.reshape(np.reshape(state_repr, [9])[d_i], [3,3])
+        d_i_applied_to_valid_actions_mask_vec = self.valid_actions_mask_vec[d_i]
 
-        return p_vec, v
+        state_repr_batch = np.expand_dims(d_i_applied_to_state_repr, 0)
+        valid_actions_mask_batch = np.expand_dims(d_i_applied_to_valid_actions_mask_vec, 0)
+
+        p_vec_leaf, v_leaf = f_theta.predict(sess, state_repr_batch, valid_actions_mask_batch)
+
+        p_vec_leaf = p_vec_leaf[0, :]
+        v_leaf = v_leaf[0, 0]
+
+        p_vec_leaf = p_vec_leaf[d_i_inverse]
+
+        return p_vec_leaf, v_leaf
 
 
 def get_me_a_tree(state):
-    node = Node(s=state, is_root=True)
-    p_vec_leaf, v_leaf = node.predict_value_and_prior_vec_for_leaf_node(sess, f_theta)
-    node.Pas_vec = p_vec_leaf
-    node.Vs = v_leaf
+    tree = Node(s=state, is_root=True)
+    p_vec_leaf, v_leaf = tree.predict_value_and_prior_vec_for_leaf_node(sess, f_theta)
+    tree.Pas_vec = p_vec_leaf
+    tree.Vs = v_leaf
 
     eps = 0.25
 
@@ -251,11 +322,21 @@ def get_me_a_tree(state):
     # and thus c = 0.03 * (362/2), 
     # so that for tictactoe, alpha is approximately [0.03 * (362/2)] / (9/2) ~= 1.21
 
-    alpha_vec = alpha * np.ones(shape=(node.Pas_vec.shape[1],))
-    dirichlet = np.random.dirichlet(alpha_vec)
-    node.Pas_vec = eps * dirichlet + (1. - eps) * node.Pas_vec
+    num_valid_actions = np.sum(tree.valid_actions_mask_vec)
+    boolean_valid_actions_mask = np.reshape(np.array(tree.valid_actions_mask_vec, dtype=np.bool), [9])
 
-    return node
+    idxs_for_all_actions_within_space_of_all_actions = np.arange(9)
+    idxs_for_valid_actions_within_space_of_all_actions = idxs_for_all_actions_within_space_of_all_actions[boolean_valid_actions_mask]
+
+    alpha_vec = alpha * np.ones(shape=(num_valid_actions,))
+
+    dirichlet_noise_within_space_of_valid_actions = np.random.dirichlet(alpha_vec)
+    dirichlet_noise_for_valid_actions_within_space_of_all_actions = np.zeros(dtype=np.float32, shape=(9,))
+    dirichlet_noise_for_valid_actions_within_space_of_all_actions[idxs_for_valid_actions_within_space_of_all_actions] = dirichlet_noise_within_space_of_valid_actions
+
+    tree.Pas_vec = eps * dirichlet_noise_for_valid_actions_within_space_of_all_actions + (1. - eps) * tree.Pas_vec
+
+    return tree
 
 
 def run_me_a_simulation(tree, sess, f_theta):
@@ -339,10 +420,10 @@ def run_me_the_mcts(tree, sess, f_theta, num_sims, t):
     # when computing pi_t, the alphago zero people use tau = 1.0 early in game, and use a low temperature parameter tau for the later moves in the game.
     # for now, we will stick with tau = 1.0 the whole game, but having t as an argument in this function makes this functionality easy to change, if we so wish.
 
-    if t <= 3:
+    if t == 0:
         tau = 1.0
     else:
-        tau = 0.5
+        tau = 0.33
 
     for sim in range(0,num_sims):
         tree = run_me_a_simulation(tree, sess, f_theta)
@@ -355,7 +436,21 @@ def choose_a_move(pi_t):
     a_t = np.random.choice(9, None, p=pi_t)
     return a_t
 
-def set_new_root(tree, a_t):
+def set_new_root(tree, a_t, sess, f_theta):
+    if tree.child_nodes[a_t] is None:
+        cloned_env = tree.s.clone()
+        cloned_env.step(move=(a // 3, a % 3), player_id=cloned_env.state.turn_parity.sign)
+
+        # construct leaf node
+        new_node = Node(s=cloned_env, parent_node_and_prev_action=(tree, a_t))
+
+        p_vec_leaf, v_leaf = new_node.predict_value_and_prior_vec_for_leaf_node(sess, f_theta)
+        new_node.Pas_vec = p_vec_leaf
+        new_node.Vs = v_leaf
+
+        # attach leaf node to current node
+        tree.child_nodes[a_t] = new_node
+
     tree = tree.child_nodes[a_t]
     tree.is_root = True
     tree.parent_node = None
@@ -409,7 +504,7 @@ def run_me_a_game(sess, f_theta, num_sims=100, debug=False):
         Nas_vec = tree.Nas_vec
 
         a_t = choose_a_move(pi_t)
-        tree = set_new_root(tree, a_t)
+        tree = set_new_root(tree, a_t, sess, f_theta)
 
         train_log.append((s_t, valid_t, pi_t))
         game_log.append((s_t, a_t))
@@ -456,70 +551,61 @@ class NeuralNetwork:
         with tf.variable_scope('nn'):
             board = tf.expand_dims(tf.cast(self.state, dtype=tf.float32), -1)
 
-            channel_dim = 40
+            channel_dim = 16
 
             ## residual tower
             # conv block
             conv1 = tf.layers.conv2d(board, filters=channel_dim, kernel_size=[2,2], strides=[1,1], padding='VALID', activation=None)
-            bn1 = tf.layers.batch_normalization(conv1, training=self.is_train)
-            relu1 = tf.nn.relu(bn1)
+            conv2 = tf.layers.conv2d(board, filters=channel_dim, kernel_size=[3,1], strides=[1,1], padding='VALID', activation=None)
+            conv3 = tf.layers.conv2d(board, filters=channel_dim, kernel_size=[1,3], strides=[1,1], padding='VALID', activation=None)
+            flat1 = tf.reshape(conv1, [-1, 2*2*channel_dim])
+            flat2 = tf.reshape(conv2, [-1, 1*3*channel_dim])
+            flat3 = tf.reshape(conv3, [-1, 3*1*channel_dim])
+            flat4 = tf.reshape(board, [-1, 9])
+            concat1 = tf.concat([flat1, flat2, flat3, flat4], axis=1)
+            elu1 = tf.nn.elu(concat1)
 
-            # residual block 1
-            conv2 = tf.layers.conv2d(relu1, filters=channel_dim, kernel_size=[2,2], strides=[1,1], padding='SAME', activation=None)
-            bn2 = tf.layers.batch_normalization(conv2, training=self.is_train)
-            relu2 = tf.nn.relu(bn2)
-            conv3 = tf.layers.conv2d(relu2, filters=channel_dim, kernel_size=[2,2], strides=[1,1], padding='SAME', activation=None)
-            bn3 = tf.layers.batch_normalization(conv3, training=self.is_train)
-            res3 = relu1 + bn3
-            relu3 = tf.nn.relu(res3)
+            fc2 = tf.layers.dense(elu1, units=(10*channel_dim+9), activation=None)
+            elu2 = tf.nn.elu(fc2)
+            fc3 = tf.layers.dense(elu2, units=(10*channel_dim+9), activation=None)
+            elu3 = tf.nn.elu(fc3)
+            res1 = elu1 + elu3
 
-            # residual block 2
-            conv4 = tf.layers.conv2d(relu3, filters=channel_dim, kernel_size=[2,2], strides=[1,1], padding='SAME', activation=None)
-            bn4 = tf.layers.batch_normalization(conv4, training=self.is_train)
-            relu4 = tf.nn.relu(bn4)
-            conv5 = tf.layers.conv2d(relu4, filters=channel_dim, kernel_size=[2,2], strides=[1,1], padding='SAME', activation=None)
-            bn5 = tf.layers.batch_normalization(conv5, training=self.is_train)
-            res5 = relu3 + bn5
-            relu5 = tf.nn.relu(res5)
-
-            # residual block 3
-            conv6 = tf.layers.conv2d(relu5, filters=channel_dim, kernel_size=[2,2], strides=[1,1], padding='SAME', activation=None)
-            bn6 = tf.layers.batch_normalization(conv6, training=self.is_train)
-            relu6 = tf.nn.relu(bn6)
-            conv7 = tf.layers.conv2d(relu6, filters=channel_dim, kernel_size=[2,2], strides=[1,1], padding='SAME', activation=None)
-            bn7 = tf.layers.batch_normalization(conv7, training=self.is_train)
-            res7 = relu5 + bn7
-            relu7 = tf.nn.relu(res7)
-
-            shared_features = relu7
+            shared_features = res1
 
             ## policy head
-            policy_conv = tf.layers.conv2d(shared_features, filters=2, kernel_size=[1,1], strides=[1,1], padding='VALID', activation=None)
-            policy_bn = tf.layers.batch_normalization(policy_conv, training=self.is_train)
-            policy_relu = tf.nn.relu(policy_bn)
-            policy_flatten = tf.reshape(policy_relu, [-1, 3*3*2])
-            policy_fc = tf.layers.dense(policy_flatten, 9, activation=None)
-            logits = policy_fc
+            policy_fc1 = tf.layers.dense(shared_features, units=(10*channel_dim), activation=None)
+            policy_elu1 = tf.nn.elu(policy_fc1)
+            policy_fc2 = tf.layers.dense(policy_elu1, units=(10*channel_dim), activation=None)
+            policy_elu2 = tf.nn.elu(policy_fc2)
+            policy_fc3 = tf.layers.dense(policy_elu2, 9, activation=None)
+            logits = policy_fc3
 
-            softmax_terms = tf.cast(self.valid_actions_mask, dtype=tf.float32) * tf.exp(tf.reshape(logits, [-1, 9]))
+            softmax_terms = tf.cast(self.valid_actions_mask, dtype=tf.float32) * tf.exp(logits)
             self.probabilities = softmax_terms / tf.reduce_sum(softmax_terms, axis=1, keep_dims=True)
 
             ## value head
-            value_conv = tf.layers.conv2d(shared_features, filters=1, kernel_size=[1,1], strides=[1,1], padding='VALID', activation=None)
-            value_bn = tf.layers.batch_normalization(value_conv, training=self.is_train)
-            value_relu1 = tf.nn.relu(value_bn)
-            value_flatten = tf.reshape(value_relu1, [-1, 3*3*1])
-            value_fc1 = tf.layers.dense(value_flatten, channel_dim, activation=None)
-            value_relu2 = tf.nn.relu(value_fc1)
-            value_fc2 = tf.layers.dense(value_relu2, 1, activation=None)
-            value_tanh = tf.nn.tanh(value_fc2)
+            value_fc1 = tf.layers.dense(shared_features, units=(2*channel_dim), activation=None)
+            value_elu1 = tf.nn.relu(value_fc1)
+            value_fc2 = tf.layers.dense(value_elu1, units=(2*channel_dim), activation=None)
+            value_elu2 = tf.nn.relu(value_fc2)
+            value_fc3 = tf.layers.dense(value_elu2, units=1, activation=None)
+            value_tanh = tf.nn.tanh(value_fc3)
 
             self.value = value_tanh
 
-            self.loss_terms = tf.squeeze(tf.square(self.z - self.value), [1]) - tf.reduce_sum(self.pi * tf.log(self.probabilities + 1e-8), axis=1)
-            self.loss = tf.reduce_mean(self.loss_terms, axis=0)
+            self.mse_terms = tf.squeeze(tf.square(self.z - self.value), [1])
+            self.cross_entropy_terms = -tf.reduce_sum(self.pi * tf.log(self.probabilities + 1e-8), axis=1)
+
+            self.mse = tf.reduce_mean(self.mse_terms, axis=0)
+            self.cross_entropy = tf.reduce_mean(self.cross_entropy_terms, axis=0)
+
+            self.loss = self.mse + self.cross_entropy
             self.optimizer = tf.train.MomentumOptimizer(self.lr, momentum=0.9)
-            self.train_op = self.optimizer.minimize(self.loss)
+            tvars = tf.trainable_variables()
+            gradients, _ = zip(*self.optimizer.compute_gradients(loss=self.loss, var_list=tvars))
+            gradients, _ = tf.clip_by_global_norm(gradients, 5.0)
+            self.train_op = self.optimizer.apply_gradients(zip(gradients, tvars))
 
     def predict(self, sess, state, valid_actions_mask):
         feed_dict = {
@@ -539,8 +625,8 @@ class NeuralNetwork:
             self.is_train: True,
             self.lr: lr
         }
-        _, loss = sess.run([self.train_op, self.loss], feed_dict=feed_dict)
-        return loss
+        _, loss, mse, cross_entropy = sess.run([self.train_op, self.loss, self.mse, self.cross_entropy], feed_dict=feed_dict)
+        return loss, mse, cross_entropy
 
 
 f_theta = NeuralNetwork()
@@ -558,7 +644,7 @@ sess.run(init_op)
 train_log_before, game_log_before, debug_log_before = run_me_a_game(sess, f_theta, num_sims=100, debug=True)
 
 
-def training_step(sess, f_theta, lr, num_games=256, batch_size=64, num_sims=100, gradient_steps=8, verbose=False):
+def training_step(sess, f_theta, lr, num_games=256, batch_size=64, num_sims=100, gradient_steps=1, verbose=False):
     train_log_combined = []
     for _ in range(0, num_games):
         train_log, _, _ = run_me_a_game(sess, f_theta, num_sims=num_sims)
@@ -590,9 +676,9 @@ def training_step(sess, f_theta, lr, num_games=256, batch_size=64, num_sims=100,
         pi_batch = np.array(pi_batch)
         z_batch = np.array(z_batch)
 
-        loss_batch = f_theta.train(sess, state_batch, valid_actions_mask_batch, pi_batch, z_batch, lr)
+        loss, mse, cross_entropy = f_theta.train(sess, state_batch, valid_actions_mask_batch, pi_batch, z_batch, lr)
 
-        print('loss: {}'.format(loss_batch))
+        print('loss: {}... mse: {}... cross_entropy: {}'.format(loss, mse, cross_entropy))
 
         if i == gradient_steps - 1:
             break
@@ -705,7 +791,7 @@ def play_me_a_game(sess, f_theta, num_sims=100, human_player_id=None):
             # because, why not increase our visitation counts?
             tree, pi_t = run_me_the_mcts(tree, sess, f_theta, num_sims=num_sims, t=t)
             a_t = 3 * move[0] + move[1]
-            tree = set_new_root(tree, a_t)
+            tree = set_new_root(tree, a_t, sess, f_theta)
 
         else:
             print('_____________\nnew turn.\n')
@@ -714,7 +800,7 @@ def play_me_a_game(sess, f_theta, num_sims=100, human_player_id=None):
 
             tree, pi_t = run_me_the_mcts(tree, sess, f_theta, num_sims=num_sims, t=t)
             a_t = choose_a_move(pi_t)
-            tree = set_new_root(tree, a_t)
+            tree = set_new_root(tree, a_t, sess, f_theta)
 
             print('the bot played at ({},{}).\n'.format(a_t // 3, a_t % 3))
             time.sleep(3)
@@ -733,10 +819,10 @@ def play_me_a_game(sess, f_theta, num_sims=100, human_player_id=None):
             break
 
 
-mode_selector = 'basic'
+mode_selector = 'standard'
 training_loop(sess, f_theta, mode=mode_selector)
 
-train_log_after, game_log_after, debug_log_after = run_me_a_game(sess, f_theta, num_sims=100, debug=False)
+train_log_after, game_log_after, debug_log_after = run_me_a_game(sess, f_theta, num_sims=1000, debug=True)
 
 
-#play_me_a_game(sess, f_theta, num_sims=100)
+#play_me_a_game(sess, f_theta, num_sims=1600)
